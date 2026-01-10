@@ -130,8 +130,9 @@ func (c *CatalogClient) GetProducts(ctx context.Context, productIDs []string) ([
 }
 
 // GetAllProducts fetches all active products from catalog (for Push All feature)
+// Uses public catalog endpoint for service-to-service communication
 func (c *CatalogClient) GetAllProducts(ctx context.Context) ([]Product, error) {
-	url := fmt.Sprintf("%s/api/v1/admin/products?status=active&page_size=1000", c.baseURL)
+	url := fmt.Sprintf("%s/api/v1/catalog/products?status=active&page_size=1000", c.baseURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
