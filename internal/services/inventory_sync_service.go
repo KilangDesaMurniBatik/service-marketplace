@@ -102,6 +102,26 @@ func (s *InventorySyncService) HandleStockChanged(event *events.StockChangedEven
 	return nil
 }
 
+// HandleProductUpdated implements events.EventHandler
+// Note: For full product sync support, use MarketplaceSyncHandler instead
+func (s *InventorySyncService) HandleProductUpdated(event *events.ProductUpdatedEvent) error {
+	s.logger.Debug("Product updated event received by InventorySyncService",
+		zap.String("product_id", event.ProductID),
+		zap.String("note", "Use MarketplaceSyncHandler for full product sync"),
+	)
+	return nil
+}
+
+// HandleProductDeleted implements events.EventHandler
+// Note: For full product sync support, use MarketplaceSyncHandler instead
+func (s *InventorySyncService) HandleProductDeleted(event *events.ProductDeletedEvent) error {
+	s.logger.Debug("Product deleted event received by InventorySyncService",
+		zap.String("product_id", event.ProductID),
+		zap.String("note", "Use MarketplaceSyncHandler for full product sync"),
+	)
+	return nil
+}
+
 // syncInventoryForMapping syncs inventory to a single marketplace
 func (s *InventorySyncService) syncInventoryForMapping(ctx context.Context, mapping *models.ProductMapping, quantity int) {
 	// Get connection

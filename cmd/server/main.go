@@ -184,8 +184,35 @@ func main() {
 		logger.Fatal("Failed to initialize inventory sync service", zap.Error(err))
 	}
 
+	// Initialize marketplace sync handler for auto-sync when products are updated
+	marketplaceSyncHandler, err := services.NewMarketplaceSyncHandler(
+		connectionRepo,
+		productMappingRepo,
+		categoryMappingRepo,
+		catalogClient,
+		eventPublisher,
+		&services.MarketplaceSyncHandlerConfig{
+			ShopeePartnerID:  cfg.Shopee.PartnerID,
+			ShopeePartnerKey: cfg.Shopee.PartnerKey,
+			ShopeeSandbox:    cfg.Shopee.IsSandbox,
+			EncryptionKey:    cfg.Security.EncryptionKey,
+			AutoSyncEnabled:  true, // Enable auto-sync by default
+		},
+		logger,
+	)
+	if err != nil {
+		logger.Warn("Failed to initialize marketplace sync handler", zap.Error(err))
+	}
+
 	// Start NATS subscriber if connected
-	if natsConn != nil {
+	if natsConn != nil && marketplaceSyncHandler != nil {
+		eventSubscriber = events.NewSubscriber(natsConn, marketplaceSyncHandler, logger)
+		if err := eventSubscriber.Start(); err != nil {
+			logger.Warn("Failed to start event subscriber", zap.Error(err))
+		}
+		logger.Info("Auto-sync enabled: Products will sync to marketplaces when updated in admin")
+	} else if natsConn != nil {
+		// Fallback to inventory sync service if marketplace sync handler failed
 		eventSubscriber = events.NewSubscriber(natsConn, inventorySyncService, logger)
 		if err := eventSubscriber.Start(); err != nil {
 			logger.Warn("Failed to start event subscriber", zap.Error(err))

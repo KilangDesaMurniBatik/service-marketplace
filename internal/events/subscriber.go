@@ -14,6 +14,11 @@ const (
 	SubjectInventoryStockChanged = "inventory.stock.changed"
 	SubjectMarketplaceSyncOK     = "marketplace.sync.completed"
 	SubjectMarketplaceSyncFailed = "marketplace.sync.failed"
+
+	// Catalog events - subscribe to product changes for auto-sync
+	SubjectProductCreated = "product.created"
+	SubjectProductUpdated = "product.updated"
+	SubjectProductDeleted = "product.deleted"
 )
 
 // StockChangedEvent represents an inventory change event
@@ -26,6 +31,23 @@ type StockChangedEvent struct {
 	WarehouseID string     `json:"warehouse_id,omitempty"`
 	Reason      string     `json:"reason"` // sale, adjustment, return, etc.
 	Timestamp   time.Time  `json:"timestamp"`
+}
+
+// ProductUpdatedEvent represents a product update from catalog service
+type ProductUpdatedEvent struct {
+	ProductID  string    `json:"product_id"`
+	SKU        string    `json:"sku"`
+	Name       string    `json:"name"`
+	CategoryID string    `json:"category_id"`
+	BasePrice  float64   `json:"base_price"`
+	IsActive   bool      `json:"is_active"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// ProductDeletedEvent represents a product deletion from catalog service
+type ProductDeletedEvent struct {
+	ProductID string    `json:"product_id"`
+	DeletedAt time.Time `json:"deleted_at"`
 }
 
 // SyncCompletedEvent represents a successful sync event
@@ -58,6 +80,8 @@ type Subscriber struct {
 // EventHandler defines the interface for handling events
 type EventHandler interface {
 	HandleStockChanged(event *StockChangedEvent) error
+	HandleProductUpdated(event *ProductUpdatedEvent) error
+	HandleProductDeleted(event *ProductDeletedEvent) error
 }
 
 // NewSubscriber creates a new NATS subscriber
@@ -78,8 +102,25 @@ func (s *Subscriber) Start() error {
 		return err
 	}
 	s.subs = append(s.subs, sub)
+	s.logger.Info("Subscribed to event", zap.String("subject", SubjectInventoryStockChanged))
 
-	s.logger.Info("NATS subscriber started", zap.String("subject", SubjectInventoryStockChanged))
+	// Subscribe to product updates for auto-sync to marketplaces
+	sub, err = s.nc.Subscribe(SubjectProductUpdated, s.handleProductUpdated)
+	if err != nil {
+		return err
+	}
+	s.subs = append(s.subs, sub)
+	s.logger.Info("Subscribed to event", zap.String("subject", SubjectProductUpdated))
+
+	// Subscribe to product deletions
+	sub, err = s.nc.Subscribe(SubjectProductDeleted, s.handleProductDeleted)
+	if err != nil {
+		return err
+	}
+	s.subs = append(s.subs, sub)
+	s.logger.Info("Subscribed to event", zap.String("subject", SubjectProductDeleted))
+
+	s.logger.Info("NATS subscriber started with all subscriptions")
 	return nil
 }
 
@@ -106,6 +147,48 @@ func (s *Subscriber) handleStockChanged(msg *nats.Msg) {
 
 	if err := s.handler.HandleStockChanged(&event); err != nil {
 		s.logger.Error("Failed to handle stock changed event", zap.Error(err))
+	}
+}
+
+// handleProductUpdated processes product updated events
+func (s *Subscriber) handleProductUpdated(msg *nats.Msg) {
+	var event ProductUpdatedEvent
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
+		s.logger.Error("Failed to unmarshal product updated event", zap.Error(err))
+		return
+	}
+
+	s.logger.Info("Received product updated event",
+		zap.String("product_id", event.ProductID),
+		zap.String("name", event.Name),
+		zap.Float64("base_price", event.BasePrice),
+	)
+
+	if err := s.handler.HandleProductUpdated(&event); err != nil {
+		s.logger.Error("Failed to handle product updated event",
+			zap.String("product_id", event.ProductID),
+			zap.Error(err),
+		)
+	}
+}
+
+// handleProductDeleted processes product deleted events
+func (s *Subscriber) handleProductDeleted(msg *nats.Msg) {
+	var event ProductDeletedEvent
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
+		s.logger.Error("Failed to unmarshal product deleted event", zap.Error(err))
+		return
+	}
+
+	s.logger.Info("Received product deleted event",
+		zap.String("product_id", event.ProductID),
+	)
+
+	if err := s.handler.HandleProductDeleted(&event); err != nil {
+		s.logger.Error("Failed to handle product deleted event",
+			zap.String("product_id", event.ProductID),
+			zap.Error(err),
+		)
 	}
 }
 
