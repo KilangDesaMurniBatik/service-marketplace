@@ -190,19 +190,35 @@ func (s *ProductSyncService) DeleteCategoryMapping(ctx context.Context, mappingI
 }
 
 // PushProducts pushes products to a marketplace
+// If productIDs is empty, fetches all active products from catalog
 func (s *ProductSyncService) PushProducts(ctx context.Context, connectionID uuid.UUID, productIDs []string) (*models.SyncJob, error) {
-	if len(productIDs) == 0 {
-		return nil, ErrNoProductsToSync
-	}
-
 	conn, err := s.connectionRepo.GetByID(ctx, connectionID)
 	if err != nil {
 		return nil, ErrConnectionNotFound
 	}
 
+	// If no specific products, fetch all from catalog
+	pushAll := len(productIDs) == 0
+	if pushAll {
+		s.logger.Info("Push all products requested, fetching from catalog")
+		products, err := s.catalogClient.GetAllProducts(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch products from catalog: %w", err)
+		}
+		if len(products) == 0 {
+			return nil, ErrNoProductsToSync
+		}
+		productIDs = make([]string, len(products))
+		for i, p := range products {
+			productIDs[i] = p.ID
+		}
+		s.logger.Info("Fetched products for push all", zap.Int("count", len(productIDs)))
+	}
+
 	// Create sync job
 	payload, _ := json.Marshal(map[string]interface{}{
 		"product_ids": productIDs,
+		"push_all":    pushAll,
 	})
 
 	job := &models.SyncJob{

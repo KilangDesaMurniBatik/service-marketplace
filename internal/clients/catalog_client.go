@@ -129,6 +129,38 @@ func (c *CatalogClient) GetProducts(ctx context.Context, productIDs []string) ([
 	return products, nil
 }
 
+// GetAllProducts fetches all active products from catalog (for Push All feature)
+func (c *CatalogClient) GetAllProducts(ctx context.Context) ([]Product, error) {
+	url := fmt.Sprintf("%s/api/v1/admin/products?status=active&page_size=1000", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Products []Product `json:"products"`
+		Total    int       `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	c.logger.Info("Fetched products from catalog", zap.Int("count", len(result.Products)), zap.Int("total", result.Total))
+	return result.Products, nil
+}
+
 // GetCategories fetches all categories
 func (c *CatalogClient) GetCategories(ctx context.Context) ([]Category, error) {
 	url := fmt.Sprintf("%s/api/v1/catalog/categories", c.baseURL)

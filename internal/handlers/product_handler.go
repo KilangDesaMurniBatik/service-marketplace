@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -69,12 +68,14 @@ func (h *ProductHandler) GetMappedProducts(c *gin.Context) {
 }
 
 // PushProductsRequest represents the request to push products
+// Empty product_ids means "push all active products"
 type PushProductsRequest struct {
-	ProductIDs []string `json:"product_ids" binding:"required,min=1"`
+	ProductIDs []string `json:"product_ids"` // Optional - empty means push all
 }
 
 // PushProducts pushes products to a marketplace
 // POST /api/v1/admin/marketplace/connections/:id/products/push
+// If product_ids is empty, pushes all active products from catalog
 func (h *ProductHandler) PushProducts(c *gin.Context) {
 	connectionID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -83,13 +84,7 @@ func (h *ProductHandler) PushProducts(c *gin.Context) {
 	}
 
 	var req PushProductsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request body",
-			"message": fmt.Sprintf("product_ids is required with at least 1 item"),
-		})
-		return
-	}
+	_ = c.ShouldBindJSON(&req) // Ignore binding errors, empty is valid
 
 	job, err := h.service.PushProducts(c.Request.Context(), connectionID, req.ProductIDs)
 	if err != nil {
@@ -98,8 +93,13 @@ func (h *ProductHandler) PushProducts(c *gin.Context) {
 		return
 	}
 
+	message := "Product push job created"
+	if len(req.ProductIDs) == 0 {
+		message = "Push all products job created"
+	}
+
 	c.JSON(http.StatusAccepted, gin.H{
-		"message": "Product push job created",
+		"message": message,
 		"job_id":  job.ID,
 		"status":  job.Status,
 	})
