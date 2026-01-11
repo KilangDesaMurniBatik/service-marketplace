@@ -84,8 +84,9 @@ type Category struct {
 }
 
 // GetProduct fetches a product by ID
+// Uses public catalog endpoint for service-to-service communication
 func (c *CatalogClient) GetProduct(ctx context.Context, productID string) (*Product, error) {
-	url := fmt.Sprintf("%s/api/v1/admin/products/%s", c.baseURL, productID)
+	url := fmt.Sprintf("%s/api/v1/catalog/products/%s", c.baseURL, productID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -103,14 +104,17 @@ func (c *CatalogClient) GetProduct(ctx context.Context, productID string) (*Prod
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Public catalog endpoint returns {success, message, data} format
 	var result struct {
-		Product Product `json:"product"`
+		Success bool    `json:"success"`
+		Message string  `json:"message"`
+		Data    Product `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &result.Product, nil
+	return &result.Data, nil
 }
 
 // GetProducts fetches multiple products by IDs
