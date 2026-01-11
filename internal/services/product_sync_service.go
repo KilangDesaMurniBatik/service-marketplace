@@ -314,6 +314,16 @@ func (s *ProductSyncService) processProductPushJob(ctx context.Context, job *mod
 			price = *product.SalePrice
 		}
 
+		// Map dimensions if available from catalog
+		var dimensions *providers.Dimensions
+		if product.Dimensions != nil {
+			dimensions = &providers.Dimensions{
+				Length: product.Dimensions.Length,
+				Width:  product.Dimensions.Width,
+				Height: product.Dimensions.Height,
+			}
+		}
+
 		pushReq := &providers.ProductPushRequest{
 			InternalID:    product.ID,
 			Name:          product.Name,
@@ -326,6 +336,7 @@ func (s *ProductSyncService) processProductPushJob(ctx context.Context, job *mod
 			Images:        images,
 			Weight:        product.Weight,
 			Brand:         product.Brand,
+			Dimensions:    dimensions,
 		}
 
 		// Push to marketplace

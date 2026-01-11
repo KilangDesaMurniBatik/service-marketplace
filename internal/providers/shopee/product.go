@@ -106,11 +106,25 @@ func (p *ProductProvider) PushProduct(ctx context.Context, product *providers.Pr
 	}
 
 	// Add dimension (required by Shopee for shipping)
-	// Default to 10x10x5 cm if not specified
+	// Use actual dimensions if provided, otherwise default to 10x10x5 cm
+	length := 10.0
+	width := 10.0
+	height := 5.0
+	if product.Dimensions != nil {
+		if product.Dimensions.Length > 0 {
+			length = product.Dimensions.Length
+		}
+		if product.Dimensions.Width > 0 {
+			width = product.Dimensions.Width
+		}
+		if product.Dimensions.Height > 0 {
+			height = product.Dimensions.Height
+		}
+	}
 	itemBody["dimension"] = map[string]interface{}{
-		"package_length": 10, // cm
-		"package_width":  10, // cm
-		"package_height": 5,  // cm
+		"package_length": length,
+		"package_width":  width,
+		"package_height": height,
 	}
 
 	// Add seller_stock - Shopee API v2 requires this format

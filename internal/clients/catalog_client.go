@@ -31,23 +31,31 @@ func NewCatalogClient(baseURL string, logger *zap.Logger) *CatalogClient {
 
 // Product represents a product from service-catalog
 type Product struct {
-	ID            string           `json:"id"`
-	Name          string           `json:"name"`
-	Slug          string           `json:"slug"`
-	Description   string           `json:"description"`
-	BasePrice     float64          `json:"base_price"`
-	SalePrice     *float64         `json:"sale_price"`
-	SKU           string           `json:"sku"`
-	Weight        float64          `json:"weight"`
-	CategoryID    string           `json:"category_id"`
-	CategoryName  string           `json:"category_name"`
-	Brand         string           `json:"brand"`
-	Status        string           `json:"status"`
-	Images        []ProductImage   `json:"images"`
-	Variants      []ProductVariant `json:"variants"`
-	StockQuantity int              `json:"stock_quantity"`
-	CreatedAt     time.Time        `json:"created_at"`
-	UpdatedAt     time.Time        `json:"updated_at"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Slug          string            `json:"slug"`
+	Description   string            `json:"description"`
+	BasePrice     float64           `json:"base_price"`
+	SalePrice     *float64          `json:"sale_price"`
+	SKU           string            `json:"sku"`
+	Weight        float64           `json:"weight"`
+	Dimensions    *ProductDimension `json:"dimensions"`
+	CategoryID    string            `json:"category_id"`
+	CategoryName  string            `json:"category_name"`
+	Brand         string            `json:"brand"`
+	Status        string            `json:"status"`
+	Images        []ProductImage    `json:"images"`
+	Variants      []ProductVariant  `json:"variants"`
+	StockQuantity int               `json:"stock_quantity"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+}
+
+// ProductDimension represents product dimensions for shipping
+type ProductDimension struct {
+	Length float64 `json:"length"` // cm
+	Width  float64 `json:"width"`  // cm
+	Height float64 `json:"height"` // cm
 }
 
 // ProductImage represents a product image
