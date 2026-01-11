@@ -88,14 +88,15 @@ func (p *ProductProvider) PushProduct(ctx context.Context, product *providers.Pr
 
 	// Build request body
 	itemBody := map[string]interface{}{
-		"original_price": product.OriginalPrice,
-		"description":    product.Description,
-		"item_name":      product.Name,
-		"weight":         product.Weight / 1000, // Convert g to kg
-		"category_id":    categoryID,
-		"item_sku":       product.SKU,
-		"condition":      "NEW",
-		"item_status":    "NORMAL",
+		"original_price":   product.OriginalPrice,
+		"description":      product.Description,
+		"description_type": "normal", // Required by Shopee API - "normal" for text only
+		"item_name":        product.Name,
+		"weight":           product.Weight / 1000, // Convert g to kg
+		"category_id":      categoryID,
+		"item_sku":         product.SKU,
+		"condition":        "NEW",
+		"item_status":      "NORMAL",
 	}
 
 	// Add seller_stock - Shopee API v2 requires this format
