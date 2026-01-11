@@ -124,12 +124,15 @@ func (p *ProductProvider) PushProduct(ctx context.Context, product *providers.Pr
 		},
 	}
 
-	// Add brand if provided
-	if product.Brand != "" {
-		itemBody["brand"] = map[string]interface{}{
-			"brand_id":   0,
-			"brand_name": product.Brand,
-		}
+	// Add brand - Shopee requires brand for most categories
+	// Use "No Brand" (brand_id: 0) if no brand specified
+	brandName := product.Brand
+	if brandName == "" {
+		brandName = "No Brand"
+	}
+	itemBody["brand"] = map[string]interface{}{
+		"brand_id":             0,
+		"original_brand_name": brandName,
 	}
 
 	req := &Request{
