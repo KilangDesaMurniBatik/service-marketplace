@@ -1,10 +1,16 @@
 package shopee
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"path"
 	"strconv"
+	"time"
 
 	"github.com/niaga-platform/service-marketplace/internal/providers"
 )
@@ -32,19 +38,61 @@ func NewProductProvider(client *Client) *ProductProvider {
 	return &ProductProvider{client: client}
 }
 
-// UploadImageByURL uploads an image from URL to Shopee's Media Space
+// UploadImageByURL downloads an image from URL and uploads it to Shopee's Media Space
 // Returns the image_id that can be used in product creation
 func (p *ProductProvider) UploadImageByURL(ctx context.Context, imageURL string) (string, error) {
-	req := &Request{
-		Method: http.MethodPost,
-		Path:   UploadImagePath,
-		Body: map[string]interface{}{
-			"image_url": imageURL,
-		},
-		NeedAuth: true,
+	// Download the image from the URL
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	imgResp, err := httpClient.Get(imageURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download image from %s: %w", imageURL, err)
+	}
+	defer imgResp.Body.Close()
+
+	if imgResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download image: status %d", imgResp.StatusCode)
 	}
 
-	var resp struct {
+	// Read image data
+	imageData, err := io.ReadAll(imgResp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read image data: %w", err)
+	}
+
+	// Create multipart form
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// Get filename from URL
+	filename := path.Base(imageURL)
+	if filename == "" || filename == "." || filename == "/" {
+		filename = "image.jpg"
+	}
+
+	// Create form file field
+	part, err := writer.CreateFormFile("image", filename)
+	if err != nil {
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	// Write image data to form
+	if _, err := part.Write(imageData); err != nil {
+		return "", fmt.Errorf("failed to write image data: %w", err)
+	}
+
+	// Close multipart writer
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	// Use client's multipart upload method
+	uploadResp, err := p.client.DoMultipart(ctx, UploadImagePath, writer.FormDataContentType(), &body)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload image to Shopee: %w", err)
+	}
+
+	// Parse response
+	var respData struct {
 		BaseResponse
 		Response struct {
 			ImageInfo struct {
@@ -53,15 +101,15 @@ func (p *ProductProvider) UploadImageByURL(ctx context.Context, imageURL string)
 		} `json:"response"`
 	}
 
-	if err := p.client.Do(ctx, req, &resp); err != nil {
-		return "", fmt.Errorf("failed to upload image: %w", err)
+	if err := json.Unmarshal(uploadResp, &respData); err != nil {
+		return "", fmt.Errorf("failed to parse upload response: %w", err)
 	}
 
-	if resp.HasError() {
-		return "", fmt.Errorf("shopee image upload error: %s", resp.GetError())
+	if respData.HasError() {
+		return "", fmt.Errorf("shopee image upload error: %s", respData.GetError())
 	}
 
-	return resp.Response.ImageInfo.ImageID, nil
+	return respData.Response.ImageInfo.ImageID, nil
 }
 
 // GetCategories fetches marketplace categories

@@ -198,6 +198,64 @@ func (c *Client) Do(ctx context.Context, req *Request, result interface{}) error
 	return nil
 }
 
+// DoMultipart performs a multipart/form-data upload request to Shopee API.
+// Returns the raw response body for the caller to parse.
+func (c *Client) DoMultipart(ctx context.Context, path string, contentType string, body io.Reader) ([]byte, error) {
+	timestamp := time.Now().Unix()
+
+	// Get current tokens
+	c.tokenMu.RLock()
+	accessToken := c.accessToken
+	shopID := c.shopID
+	c.tokenMu.RUnlock()
+
+	// Build URL with auth params
+	url := c.baseURL + path
+	sign := c.generateSignWithTokens(path, timestamp, accessToken, shopID)
+
+	queryParams := []string{
+		fmt.Sprintf("partner_id=%d", c.partnerID),
+		fmt.Sprintf("timestamp=%d", timestamp),
+		fmt.Sprintf("access_token=%s", accessToken),
+		fmt.Sprintf("shop_id=%d", shopID),
+		fmt.Sprintf("sign=%s", sign),
+	}
+
+	sort.Strings(queryParams)
+	url += "?" + strings.Join(queryParams, "&")
+
+	// Create HTTP request
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create multipart request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", contentType)
+
+	// Execute request
+	startTime := time.Now()
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("multipart request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read multipart response: %w", err)
+	}
+
+	c.logger.Debug("Shopee multipart upload completed",
+		zap.String("path", path),
+		zap.Int("status", resp.StatusCode),
+		zap.Duration("latency", time.Since(startTime)),
+		zap.String("response", truncateString(string(respBody), 500)),
+	)
+
+	return respBody, nil
+}
+
 // doRequest performs a single HTTP request without retry.
 func (c *Client) doRequest(ctx context.Context, req *Request, result interface{}) error {
 	timestamp := time.Now().Unix()
