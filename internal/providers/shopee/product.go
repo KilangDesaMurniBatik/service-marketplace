@@ -211,8 +211,38 @@ func (p *ProductProvider) GetCategories(ctx context.Context) ([]providers.Extern
 	return categories, nil
 }
 
+// isSpamDescription checks if description appears to be placeholder/spam text
+func isSpamDescription(desc string) bool {
+	if len(desc) < 20 {
+		return true
+	}
+	// Check if description is mostly repeated characters
+	charCount := make(map[rune]int)
+	for _, r := range desc {
+		charCount[r]++
+	}
+	// If any single character makes up more than 50% of the description, it's spam
+	threshold := len(desc) / 2
+	for _, count := range charCount {
+		if count > threshold {
+			return true
+		}
+	}
+	return false
+}
+
 // PushProduct creates a new product on Shopee
 func (p *ProductProvider) PushProduct(ctx context.Context, product *providers.ProductPushRequest) (*providers.ProductPushResponse, error) {
+	// Validate description - Shopee requires meaningful content (min 100 chars, no spam)
+	if len(product.Description) < 100 {
+		return nil, fmt.Errorf("description too short - Shopee requires at least 100 characters (current: %d)", len(product.Description))
+	}
+
+	// Check for spam/placeholder patterns (repeated characters)
+	if isSpamDescription(product.Description) {
+		return nil, fmt.Errorf("description appears to be placeholder text - Shopee requires meaningful product descriptions")
+	}
+
 	// Convert category_id from string to int64 (Shopee requires uint64)
 	categoryID, err := strconv.ParseInt(product.CategoryID, 10, 64)
 	if err != nil {
