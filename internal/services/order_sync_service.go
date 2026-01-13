@@ -367,6 +367,70 @@ func (s *OrderSyncService) HandleTikTokOrderEvent(shopID, orderID string, status
 	}
 }
 
+// GetAWBDownloadURL gets the AWB download URL for an order
+func (s *OrderSyncService) GetAWBDownloadURL(ctx context.Context, orderID uuid.UUID, documentType string) (string, error) {
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return "", fmt.Errorf("order not found: %w", err)
+	}
+
+	conn, err := s.connectionRepo.GetByID(ctx, order.ConnectionID)
+	if err != nil {
+		return "", ErrConnectionNotFound
+	}
+
+	accessToken := conn.AccessToken
+	if s.encryptor != nil {
+		accessToken, err = s.encryptor.Decrypt(conn.AccessToken)
+		if err != nil {
+			return "", fmt.Errorf("failed to decrypt token: %w", err)
+		}
+	}
+
+	switch conn.Platform {
+	case "shopee":
+		shopID, _ := strconv.ParseInt(conn.ShopID, 10, 64)
+		client, _ := shopee.NewClient(&shopee.ClientConfig{
+			PartnerID:  s.shopeePartnerID,
+			PartnerKey: s.shopeePartnerKey,
+			IsSandbox:  s.shopeeSandbox,
+			Logger:     s.logger,
+		})
+		client.SetTokens(accessToken, shopID)
+		provider := shopee.NewOrderProvider(client)
+
+		// First, create the shipping document
+		if err := provider.CreateShippingDocument(ctx, order.ExternalOrderID, documentType); err != nil {
+			s.logger.Warn("Create shipping document warning", zap.Error(err))
+			// Continue anyway - document might already exist
+		}
+
+		// Check if document is ready
+		result, err := provider.GetShippingDocumentResult(ctx, order.ExternalOrderID, documentType)
+		if err != nil {
+			return "", fmt.Errorf("failed to get document status: %w", err)
+		}
+
+		if result.Status != "READY" {
+			return "", fmt.Errorf("document not ready, status: %s", result.Status)
+		}
+
+		// Download the document URL
+		url, err := provider.DownloadShippingDocument(ctx, order.ExternalOrderID, documentType)
+		if err != nil {
+			return "", fmt.Errorf("failed to get download URL: %w", err)
+		}
+
+		return url, nil
+
+	case "tiktok":
+		return "", fmt.Errorf("AWB download not yet implemented for TikTok")
+
+	default:
+		return "", ErrInvalidPlatform
+	}
+}
+
 // UpdateOrderStatus updates order status on the marketplace
 func (s *OrderSyncService) UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status string) error {
 	order, err := s.orderRepo.GetByID(ctx, orderID)

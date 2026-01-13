@@ -158,3 +158,38 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Order status updated"})
 }
+
+// GetAWBRequest represents the request to get AWB
+type GetAWBRequest struct {
+	DocumentType string `json:"document_type"` // NORMAL_AIR_WAYBILL, THERMAL_AIR_WAYBILL
+}
+
+// GetAWB gets the AWB download URL for an order
+// POST /api/v1/admin/marketplace/connections/:id/orders/:order_id/awb
+func (h *OrderHandler) GetAWB(c *gin.Context) {
+	orderID, err := uuid.Parse(c.Param("order_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order ID"})
+		return
+	}
+
+	var req GetAWBRequest
+	_ = c.ShouldBindJSON(&req) // Optional, use default if not provided
+
+	documentType := req.DocumentType
+	if documentType == "" {
+		documentType = "NORMAL_AIR_WAYBILL"
+	}
+
+	url, err := h.service.GetAWBDownloadURL(c.Request.Context(), orderID, documentType)
+	if err != nil {
+		h.logger.Error("Failed to get AWB", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"download_url":  url,
+		"document_type": documentType,
+	})
+}

@@ -10,9 +10,14 @@ import (
 )
 
 const (
-	GetOrderListPath   = "/api/v2/order/get_order_list"
-	GetOrderDetailPath = "/api/v2/order/get_order_detail"
-	ShipOrderPath      = "/api/v2/logistics/ship_order"
+	GetOrderListPath              = "/api/v2/order/get_order_list"
+	GetOrderDetailPath            = "/api/v2/order/get_order_detail"
+	ShipOrderPath                 = "/api/v2/logistics/ship_order"
+	GetShippingParameterPath      = "/api/v2/logistics/get_shipping_parameter"
+	GetShippingDocumentParamPath  = "/api/v2/logistics/get_shipping_document_parameter"
+	CreateShippingDocumentPath    = "/api/v2/logistics/create_shipping_document"
+	GetShippingDocumentResultPath = "/api/v2/logistics/get_shipping_document_result"
+	DownloadShippingDocumentPath  = "/api/v2/logistics/download_shipping_document"
 )
 
 // OrderProvider implements order operations for Shopee
@@ -257,4 +262,203 @@ func (p *OrderProvider) UpdateOrderStatus(ctx context.Context, orderID, status s
 	}
 
 	return nil
+}
+
+// ShippingDocumentInfo contains AWB download information
+type ShippingDocumentInfo struct {
+	Status      string `json:"status"`
+	DownloadURL string `json:"download_url"`
+	ErrorMsg    string `json:"error_msg,omitempty"`
+}
+
+// GetShippingParameter gets shipping parameters for an order
+func (p *OrderProvider) GetShippingParameter(ctx context.Context, orderSN string) (map[string]interface{}, error) {
+	req := &Request{
+		Method: http.MethodGet,
+		Path:   GetShippingParameterPath,
+		Query: map[string]string{
+			"order_sn": orderSN,
+		},
+		NeedAuth: true,
+	}
+
+	var resp struct {
+		BaseResponse
+		Response struct {
+			InfoNeeded struct {
+				Dropoff   []string `json:"dropoff"`
+				Pickup    []string `json:"pickup"`
+				NonIntegrated []string `json:"non_integrated"`
+			} `json:"info_needed"`
+			Dropoff   []map[string]interface{} `json:"dropoff"`
+			Pickup    []map[string]interface{} `json:"pickup"`
+		} `json:"response"`
+	}
+
+	if err := p.client.Do(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get shipping parameter: %w", err)
+	}
+
+	if resp.HasError() {
+		return nil, fmt.Errorf("shopee error: %s", resp.GetError())
+	}
+
+	return map[string]interface{}{
+		"info_needed": resp.Response.InfoNeeded,
+		"dropoff":     resp.Response.Dropoff,
+		"pickup":      resp.Response.Pickup,
+	}, nil
+}
+
+// CreateShippingDocument creates AWB document for an order
+func (p *OrderProvider) CreateShippingDocument(ctx context.Context, orderSN string, documentType string) error {
+	// Document types: NORMAL_AIR_WAYBILL, THERMAL_AIR_WAYBILL, NORMAL_JOB_AIR_WAYBILL, THERMAL_JOB_AIR_WAYBILL
+	if documentType == "" {
+		documentType = "NORMAL_AIR_WAYBILL"
+	}
+
+	req := &Request{
+		Method: http.MethodPost,
+		Path:   CreateShippingDocumentPath,
+		Body: map[string]interface{}{
+			"order_list": []map[string]interface{}{
+				{
+					"order_sn":               orderSN,
+					"shipping_document_type": documentType,
+				},
+			},
+		},
+		NeedAuth: true,
+	}
+
+	var resp struct {
+		BaseResponse
+		Response struct {
+			ResultList []struct {
+				OrderSN   string `json:"order_sn"`
+				FailError string `json:"fail_error"`
+			} `json:"result_list"`
+		} `json:"response"`
+	}
+
+	if err := p.client.Do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to create shipping document: %w", err)
+	}
+
+	if resp.HasError() {
+		return fmt.Errorf("shopee error: %s", resp.GetError())
+	}
+
+	// Check for per-order errors
+	for _, result := range resp.Response.ResultList {
+		if result.FailError != "" {
+			return fmt.Errorf("failed to create document for %s: %s", result.OrderSN, result.FailError)
+		}
+	}
+
+	return nil
+}
+
+// GetShippingDocumentResult checks if AWB is ready to download
+func (p *OrderProvider) GetShippingDocumentResult(ctx context.Context, orderSN string, documentType string) (*ShippingDocumentInfo, error) {
+	if documentType == "" {
+		documentType = "NORMAL_AIR_WAYBILL"
+	}
+
+	req := &Request{
+		Method: http.MethodPost,
+		Path:   GetShippingDocumentResultPath,
+		Body: map[string]interface{}{
+			"order_list": []map[string]interface{}{
+				{
+					"order_sn":               orderSN,
+					"shipping_document_type": documentType,
+				},
+			},
+		},
+		NeedAuth: true,
+	}
+
+	var resp struct {
+		BaseResponse
+		Response struct {
+			ResultList []struct {
+				OrderSN   string `json:"order_sn"`
+				Status    string `json:"status"`
+				FailError string `json:"fail_error"`
+			} `json:"result_list"`
+		} `json:"response"`
+	}
+
+	if err := p.client.Do(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get shipping document result: %w", err)
+	}
+
+	if resp.HasError() {
+		return nil, fmt.Errorf("shopee error: %s", resp.GetError())
+	}
+
+	for _, result := range resp.Response.ResultList {
+		if result.OrderSN == orderSN {
+			return &ShippingDocumentInfo{
+				Status:   result.Status, // READY, FAILED, PROCESSING
+				ErrorMsg: result.FailError,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("order not found in result")
+}
+
+// DownloadShippingDocument downloads AWB PDF for an order
+func (p *OrderProvider) DownloadShippingDocument(ctx context.Context, orderSN string, documentType string) (string, error) {
+	if documentType == "" {
+		documentType = "NORMAL_AIR_WAYBILL"
+	}
+
+	req := &Request{
+		Method: http.MethodPost,
+		Path:   DownloadShippingDocumentPath,
+		Body: map[string]interface{}{
+			"order_list": []map[string]interface{}{
+				{
+					"order_sn":               orderSN,
+					"shipping_document_type": documentType,
+				},
+			},
+		},
+		NeedAuth: true,
+	}
+
+	var resp struct {
+		BaseResponse
+		Response struct {
+			ResultList []struct {
+				OrderSN            string `json:"order_sn"`
+				ShippingDocumentInfo struct {
+					ShippingDocumentURL string `json:"shipping_document_url"`
+				} `json:"shipping_document_info"`
+				FailError string `json:"fail_error"`
+			} `json:"result_list"`
+		} `json:"response"`
+	}
+
+	if err := p.client.Do(ctx, req, &resp); err != nil {
+		return "", fmt.Errorf("failed to download shipping document: %w", err)
+	}
+
+	if resp.HasError() {
+		return "", fmt.Errorf("shopee error: %s", resp.GetError())
+	}
+
+	for _, result := range resp.Response.ResultList {
+		if result.OrderSN == orderSN {
+			if result.FailError != "" {
+				return "", fmt.Errorf("download failed: %s", result.FailError)
+			}
+			return result.ShippingDocumentInfo.ShippingDocumentURL, nil
+		}
+	}
+
+	return "", fmt.Errorf("order not found in result")
 }
