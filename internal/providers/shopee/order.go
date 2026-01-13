@@ -239,26 +239,103 @@ func (p *OrderProvider) GetOrder(ctx context.Context, orderID string) (*provider
 	return &orders[0], nil
 }
 
+// ShippingInfo contains information needed for arranging shipment
+type ShippingInfo struct {
+	Method          string // "dropoff" or "pickup"
+	TrackingNumber  string
+	DropoffBranchID int64
+	PickupTimeID    string
+	AddressID       int64
+}
+
+// ArrangeShipment arranges shipment for an order (calls ship_order API)
+func (p *OrderProvider) ArrangeShipment(ctx context.Context, orderSN string, info *ShippingInfo) error {
+	// First get shipping parameters to determine what's needed
+	params, err := p.GetShippingParameter(ctx, orderSN)
+	if err != nil {
+		return fmt.Errorf("failed to get shipping parameters: %w", err)
+	}
+
+	// Build ship order request based on available options
+	body := map[string]interface{}{
+		"order_sn": orderSN,
+	}
+
+	// Check what shipping method is available
+	infoNeeded := params["info_needed"].(map[string]interface{})
+	dropoffInfo := infoNeeded["dropoff"]
+	pickupInfo := infoNeeded["pickup"]
+
+	// Use dropoff if available (most common)
+	if dropoffInfo != nil {
+		dropoffList := params["dropoff"].([]map[string]interface{})
+		if len(dropoffList) > 0 {
+			// Use first available dropoff option
+			firstDropoff := dropoffList[0]
+			body["dropoff"] = map[string]interface{}{}
+
+			// Add branch ID if available
+			if branchList, ok := firstDropoff["branch_list"].([]interface{}); ok && len(branchList) > 0 {
+				if branch, ok := branchList[0].(map[string]interface{}); ok {
+					if branchID, ok := branch["branch_id"].(float64); ok {
+						body["dropoff"].(map[string]interface{})["branch_id"] = int64(branchID)
+					}
+				}
+			}
+		}
+	} else if pickupInfo != nil {
+		pickupList := params["pickup"].([]map[string]interface{})
+		if len(pickupList) > 0 {
+			// Use first available pickup option
+			firstPickup := pickupList[0]
+			pickupBody := map[string]interface{}{}
+
+			// Add address ID if available
+			if addressList, ok := firstPickup["address_list"].([]interface{}); ok && len(addressList) > 0 {
+				if addr, ok := addressList[0].(map[string]interface{}); ok {
+					if addrID, ok := addr["address_id"].(float64); ok {
+						pickupBody["address_id"] = int64(addrID)
+					}
+				}
+			}
+
+			// Add time slot if available
+			if timeSlotList, ok := firstPickup["time_slot_list"].([]interface{}); ok && len(timeSlotList) > 0 {
+				if slot, ok := timeSlotList[0].(map[string]interface{}); ok {
+					if pickupTimeID, ok := slot["pickup_time_id"].(string); ok {
+						pickupBody["pickup_time_id"] = pickupTimeID
+					}
+				}
+			}
+
+			body["pickup"] = pickupBody
+		}
+	}
+
+	req := &Request{
+		Method:   http.MethodPost,
+		Path:     ShipOrderPath,
+		Body:     body,
+		NeedAuth: true,
+	}
+
+	var resp BaseResponse
+	if err := p.client.Do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to ship order: %w", err)
+	}
+
+	if resp.HasError() {
+		return fmt.Errorf("shopee error: %s", resp.GetError())
+	}
+
+	return nil
+}
+
 // UpdateOrderStatus updates order status (e.g., ship order)
 func (p *OrderProvider) UpdateOrderStatus(ctx context.Context, orderID, status string) error {
 	if status == "shipped" {
-		req := &Request{
-			Method: http.MethodPost,
-			Path:   ShipOrderPath,
-			Body: map[string]interface{}{
-				"order_sn": orderID,
-			},
-			NeedAuth: true,
-		}
-
-		var resp BaseResponse
-		if err := p.client.Do(ctx, req, &resp); err != nil {
-			return fmt.Errorf("failed to ship order: %w", err)
-		}
-
-		if resp.HasError() {
-			return fmt.Errorf("shopee error: %s", resp.GetError())
-		}
+		// Use ArrangeShipment for proper shipping
+		return p.ArrangeShipment(ctx, orderID, nil)
 	}
 
 	return nil

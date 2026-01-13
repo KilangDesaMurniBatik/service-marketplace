@@ -70,6 +70,7 @@ func SetupRoutes(router *gin.Engine, cfg *RouteConfig) {
 			connections.GET("/:id/orders", cfg.OrderHandler.GetOrders)
 			connections.POST("/:id/orders/sync", cfg.OrderHandler.SyncOrders)
 			connections.PUT("/:id/orders/:order_id/status", cfg.OrderHandler.UpdateOrderStatus)
+			connections.POST("/:id/orders/:order_id/ship", cfg.OrderHandler.ArrangeShipment)
 			connections.POST("/:id/orders/:order_id/awb", cfg.OrderHandler.GetAWB)
 		}
 

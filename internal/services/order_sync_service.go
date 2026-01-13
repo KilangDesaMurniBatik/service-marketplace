@@ -367,6 +367,79 @@ func (s *OrderSyncService) HandleTikTokOrderEvent(shopID, orderID string, status
 	}
 }
 
+// ArrangeShipmentResult contains the result of arranging shipment
+type ArrangeShipmentResult struct {
+	Success        bool   `json:"success"`
+	TrackingNumber string `json:"tracking_number,omitempty"`
+	AWBUrl         string `json:"awb_url,omitempty"`
+	Message        string `json:"message"`
+}
+
+// ArrangeShipment arranges shipment for an order on the marketplace
+func (s *OrderSyncService) ArrangeShipment(ctx context.Context, orderID uuid.UUID) (*ArrangeShipmentResult, error) {
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("order not found: %w", err)
+	}
+
+	conn, err := s.connectionRepo.GetByID(ctx, order.ConnectionID)
+	if err != nil {
+		return nil, ErrConnectionNotFound
+	}
+
+	accessToken := conn.AccessToken
+	if s.encryptor != nil {
+		accessToken, err = s.encryptor.Decrypt(conn.AccessToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt token: %w", err)
+		}
+	}
+
+	switch conn.Platform {
+	case "shopee":
+		shopID, _ := strconv.ParseInt(conn.ShopID, 10, 64)
+		client, _ := shopee.NewClient(&shopee.ClientConfig{
+			PartnerID:  s.shopeePartnerID,
+			PartnerKey: s.shopeePartnerKey,
+			IsSandbox:  s.shopeeSandbox,
+			Logger:     s.logger,
+		})
+		client.SetTokens(accessToken, shopID)
+		provider := shopee.NewOrderProvider(client)
+
+		// Arrange shipment
+		if err := provider.ArrangeShipment(ctx, order.ExternalOrderID, nil); err != nil {
+			return nil, fmt.Errorf("failed to arrange shipment: %w", err)
+		}
+
+		// Update local order status
+		order.Status = "shipped"
+		if err := s.orderRepo.Update(ctx, order); err != nil {
+			s.logger.Warn("Failed to update local order status", zap.Error(err))
+		}
+
+		// Try to get AWB URL
+		awbUrl := ""
+		if err := provider.CreateShippingDocument(ctx, order.ExternalOrderID, "NORMAL_AIR_WAYBILL"); err == nil {
+			if result, err := provider.GetShippingDocumentResult(ctx, order.ExternalOrderID, "NORMAL_AIR_WAYBILL"); err == nil && result.Status == "READY" {
+				awbUrl, _ = provider.DownloadShippingDocument(ctx, order.ExternalOrderID, "NORMAL_AIR_WAYBILL")
+			}
+		}
+
+		return &ArrangeShipmentResult{
+			Success: true,
+			AWBUrl:  awbUrl,
+			Message: "Shipment arranged successfully",
+		}, nil
+
+	case "tiktok":
+		return nil, fmt.Errorf("arrange shipment not yet implemented for TikTok")
+
+	default:
+		return nil, ErrInvalidPlatform
+	}
+}
+
 // GetAWBDownloadURL gets the AWB download URL for an order
 func (s *OrderSyncService) GetAWBDownloadURL(ctx context.Context, orderID uuid.UUID, documentType string) (string, error) {
 	order, err := s.orderRepo.GetByID(ctx, orderID)

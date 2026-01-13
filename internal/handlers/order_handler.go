@@ -159,6 +159,29 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Order status updated"})
 }
 
+// ArrangeShipment arranges shipment for an order
+// POST /api/v1/admin/marketplace/connections/:id/orders/:order_id/ship
+func (h *OrderHandler) ArrangeShipment(c *gin.Context) {
+	orderID, err := uuid.Parse(c.Param("order_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order ID"})
+		return
+	}
+
+	result, err := h.service.ArrangeShipment(c.Request.Context(), orderID)
+	if err != nil {
+		h.logger.Error("Failed to arrange shipment", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    result.Success,
+		"awb_url":    result.AWBUrl,
+		"message":    result.Message,
+	})
+}
+
 // GetAWBRequest represents the request to get AWB
 type GetAWBRequest struct {
 	DocumentType string `json:"document_type"` // NORMAL_AIR_WAYBILL, THERMAL_AIR_WAYBILL
