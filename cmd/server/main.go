@@ -147,10 +147,39 @@ func main() {
 		logger.Fatal("Failed to initialize product sync service", zap.Error(err))
 	}
 
+	// Initialize provider factory service for analytics
+	providerFactoryService, err := services.NewProviderFactoryService(
+		connectionRepo,
+		&services.ProviderFactoryConfig{
+			EncryptionKey: cfg.Security.EncryptionKey,
+			Shopee: &services.ShopeeProviderConfig{
+				PartnerID:   cfg.Shopee.PartnerID,
+				PartnerKey:  cfg.Shopee.PartnerKey,
+				RedirectURL: cfg.Shopee.RedirectURL,
+				IsSandbox:   cfg.Shopee.IsSandbox,
+			},
+			TikTok: &services.TikTokProviderConfig{
+				AppKey:      cfg.TikTok.AppKey,
+				AppSecret:   cfg.TikTok.AppSecret,
+				RedirectURL: cfg.TikTok.RedirectURL,
+			},
+		},
+		logger,
+	)
+	if err != nil {
+		logger.Warn("Failed to initialize provider factory service, analytics disabled", zap.Error(err))
+	}
+
 	// Initialize handlers
 	connectionHandler := handlers.NewConnectionHandler(connectionService, logger)
 	productHandler := handlers.NewProductHandler(productSyncService, logger)
 	categoryHandler := handlers.NewCategoryHandler(productSyncService, logger)
+
+	// Initialize analytics handler (optional)
+	var analyticsHandler *handlers.AnalyticsHandler
+	if providerFactoryService != nil {
+		analyticsHandler = handlers.NewAnalyticsHandler(connectionService, providerFactoryService, logger)
+	}
 
 	// Connect to NATS (optional - only if configured)
 	var natsConn *nats.Conn
@@ -299,6 +328,7 @@ func main() {
 		InventoryHandler:  inventoryHandler,
 		OrderHandler:      orderHandler,
 		WebhookHandler:    webhookHandler,
+		AnalyticsHandler:  analyticsHandler,
 		JWTManager:        jwtManager,
 	})
 
