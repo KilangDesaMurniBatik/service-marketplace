@@ -16,6 +16,7 @@ type RouteConfig struct {
 	InventoryHandler  *handlers.InventoryHandler
 	OrderHandler      *handlers.OrderHandler
 	WebhookHandler    *handlers.WebhookHandler
+	AnalyticsHandler  *handlers.AnalyticsHandler
 	JWTManager        *libauth.JWTManager
 }
 
@@ -78,6 +79,14 @@ func SetupRoutes(router *gin.Engine, cfg *RouteConfig) {
 			connections.PUT("/:id/orders/:order_id/status", cfg.OrderHandler.UpdateOrderStatus)
 			connections.POST("/:id/orders/:order_id/ship", cfg.OrderHandler.ArrangeShipment)
 			connections.POST("/:id/orders/:order_id/awb", cfg.OrderHandler.GetAWB)
+
+			// Analytics routes
+			if cfg.AnalyticsHandler != nil {
+				connections.GET("/:id/analytics", cfg.AnalyticsHandler.GetAnalytics)
+				connections.GET("/:id/analytics/performance", cfg.AnalyticsHandler.GetPerformance)
+				connections.GET("/:id/analytics/daily-sales", cfg.AnalyticsHandler.GetDailySales)
+				connections.GET("/:id/analytics/top-products", cfg.AnalyticsHandler.GetTopProducts)
+			}
 		}
 
 		// OAuth flow
