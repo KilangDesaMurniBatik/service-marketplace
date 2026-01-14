@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/niaga-platform/service-marketplace/internal/providers"
@@ -14,14 +16,14 @@ import (
 // AnalyticsHandler handles marketplace analytics endpoints
 type AnalyticsHandler struct {
 	connService     *services.ConnectionService
-	providerFactory *services.ProviderFactory
+	providerFactory *services.ProviderFactoryService
 	logger          *zap.Logger
 }
 
 // NewAnalyticsHandler creates a new analytics handler
 func NewAnalyticsHandler(
 	connService *services.ConnectionService,
-	providerFactory *services.ProviderFactory,
+	providerFactory *services.ProviderFactoryService,
 	logger *zap.Logger,
 ) *AnalyticsHandler {
 	return &AnalyticsHandler{
@@ -40,7 +42,11 @@ func NewAnalyticsHandler(
 // @Success 200 {object} providers.AnalyticsResponse
 // @Router /admin/marketplace/connections/{id}/analytics [get]
 func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
-	connectionID := c.Param("id")
+	connectionID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid connection ID"})
+		return
+	}
 
 	// Parse date range
 	startDateStr := c.DefaultQuery("start_date", "")
@@ -50,7 +56,6 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	if startDateStr == "" {
 		startDate = time.Now().AddDate(0, 0, -30)
 	} else {
-		var err error
 		startDate, err = time.Parse("2006-01-02", startDateStr)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid start_date format"})
@@ -61,7 +66,6 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	if endDateStr == "" {
 		endDate = time.Now()
 	} else {
-		var err error
 		endDate, err = time.Parse("2006-01-02", endDateStr)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid end_date format"})
@@ -72,13 +76,13 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	// Get connection
 	conn, err := h.connService.GetConnection(c.Request.Context(), connectionID)
 	if err != nil {
-		h.logger.Error("failed to get connection", zap.Error(err), zap.String("connection_id", connectionID))
+		h.logger.Error("failed to get connection", zap.Error(err), zap.String("connection_id", connectionID.String()))
 		c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found"})
 		return
 	}
 
-	// Get provider
-	provider, err := h.providerFactory.GetProvider(c.Request.Context(), conn)
+	// Get provider - currently only Shopee supports full analytics
+	provider, err := h.providerFactory.CreateShopeeProviderForConnection(c.Request.Context(), connectionID)
 	if err != nil {
 		h.logger.Error("failed to get provider", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize provider"})
@@ -86,7 +90,7 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	}
 
 	// Check if provider supports analytics
-	analyticsProvider, ok := provider.(AnalyticsProvider)
+	analyticsProvider, ok := interface{}(provider).(AnalyticsProvider)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "This marketplace does not support analytics"})
 		return
@@ -130,7 +134,7 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	response.TrafficSource = trafficSources
 
 	c.JSON(http.StatusOK, gin.H{
-		"connection_id": connectionID,
+		"connection_id": connectionID.String(),
 		"platform":      conn.Platform,
 		"shop_name":     conn.ShopName,
 		"date_range": gin.H{
@@ -148,7 +152,11 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 // @Success 200 {object} providers.ShopPerformance
 // @Router /admin/marketplace/connections/{id}/analytics/performance [get]
 func (h *AnalyticsHandler) GetPerformance(c *gin.Context) {
-	connectionID := c.Param("id")
+	connectionID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid connection ID"})
+		return
+	}
 
 	startDateStr := c.DefaultQuery("start_date", time.Now().AddDate(0, 0, -30).Format("2006-01-02"))
 	endDateStr := c.DefaultQuery("end_date", time.Now().Format("2006-01-02"))
@@ -156,19 +164,19 @@ func (h *AnalyticsHandler) GetPerformance(c *gin.Context) {
 	startDate, _ := time.Parse("2006-01-02", startDateStr)
 	endDate, _ := time.Parse("2006-01-02", endDateStr)
 
-	conn, err := h.connService.GetConnection(c.Request.Context(), connectionID)
+	_, err = h.connService.GetConnection(c.Request.Context(), connectionID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found"})
 		return
 	}
 
-	provider, err := h.providerFactory.GetProvider(c.Request.Context(), conn)
+	provider, err := h.providerFactory.CreateShopeeProviderForConnection(c.Request.Context(), connectionID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize provider"})
 		return
 	}
 
-	analyticsProvider, ok := provider.(AnalyticsProvider)
+	analyticsProvider, ok := interface{}(provider).(AnalyticsProvider)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Analytics not supported"})
 		return
@@ -196,7 +204,11 @@ func (h *AnalyticsHandler) GetPerformance(c *gin.Context) {
 // @Success 200 {array} providers.DailySales
 // @Router /admin/marketplace/connections/{id}/analytics/daily-sales [get]
 func (h *AnalyticsHandler) GetDailySales(c *gin.Context) {
-	connectionID := c.Param("id")
+	connectionID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid connection ID"})
+		return
+	}
 
 	startDateStr := c.DefaultQuery("start_date", time.Now().AddDate(0, 0, -30).Format("2006-01-02"))
 	endDateStr := c.DefaultQuery("end_date", time.Now().Format("2006-01-02"))
@@ -204,19 +216,19 @@ func (h *AnalyticsHandler) GetDailySales(c *gin.Context) {
 	startDate, _ := time.Parse("2006-01-02", startDateStr)
 	endDate, _ := time.Parse("2006-01-02", endDateStr)
 
-	conn, err := h.connService.GetConnection(c.Request.Context(), connectionID)
+	_, err = h.connService.GetConnection(c.Request.Context(), connectionID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found"})
 		return
 	}
 
-	provider, err := h.providerFactory.GetProvider(c.Request.Context(), conn)
+	provider, err := h.providerFactory.CreateShopeeProviderForConnection(c.Request.Context(), connectionID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize provider"})
 		return
 	}
 
-	analyticsProvider, ok := provider.(AnalyticsProvider)
+	analyticsProvider, ok := interface{}(provider).(AnalyticsProvider)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Analytics not supported"})
 		return
@@ -243,7 +255,11 @@ func (h *AnalyticsHandler) GetDailySales(c *gin.Context) {
 // @Success 200 {array} providers.TopProduct
 // @Router /admin/marketplace/connections/{id}/analytics/top-products [get]
 func (h *AnalyticsHandler) GetTopProducts(c *gin.Context) {
-	connectionID := c.Param("id")
+	connectionID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid connection ID"})
+		return
+	}
 
 	startDateStr := c.DefaultQuery("start_date", time.Now().AddDate(0, 0, -30).Format("2006-01-02"))
 	endDateStr := c.DefaultQuery("end_date", time.Now().Format("2006-01-02"))
@@ -251,19 +267,19 @@ func (h *AnalyticsHandler) GetTopProducts(c *gin.Context) {
 	startDate, _ := time.Parse("2006-01-02", startDateStr)
 	endDate, _ := time.Parse("2006-01-02", endDateStr)
 
-	conn, err := h.connService.GetConnection(c.Request.Context(), connectionID)
+	_, err = h.connService.GetConnection(c.Request.Context(), connectionID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found"})
 		return
 	}
 
-	provider, err := h.providerFactory.GetProvider(c.Request.Context(), conn)
+	provider, err := h.providerFactory.CreateShopeeProviderForConnection(c.Request.Context(), connectionID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize provider"})
 		return
 	}
 
-	analyticsProvider, ok := provider.(AnalyticsProvider)
+	analyticsProvider, ok := interface{}(provider).(AnalyticsProvider)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Analytics not supported"})
 		return
