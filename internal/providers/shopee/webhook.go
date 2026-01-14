@@ -25,6 +25,7 @@ const (
 	WebhookEventReservedStockChange
 	WebhookEventBrandRegister
 	WebhookEventOpenApi
+	WebhookEventReturnStatusUpdate
 	WebhookEventWebhookTest
 )
 
@@ -37,6 +38,7 @@ const (
 	PushCodeReservedStockChange = 6
 	PushCodeBrandRegister       = 7
 	PushCodeOpenApi             = 8
+	PushCodeReturnStatusUpdate  = 9
 	PushCodeWebhookTest         = 10
 )
 
@@ -70,6 +72,16 @@ type TrackingUpdateData struct {
 	ShopID         int64  `json:"shop_id"`
 	LogisticsStatus string `json:"logistics_status"`
 	UpdateTime     int64  `json:"update_time"`
+}
+
+// ReturnStatusData represents return/refund status update webhook data.
+type ReturnStatusData struct {
+	ReturnSN   string `json:"returnsn"`
+	OrderSN    string `json:"ordersn"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+	ShopID     int64  `json:"shop_id"`
+	UpdateTime int64  `json:"update_time"`
 }
 
 // WebhookHandler handles incoming Shopee webhooks.
@@ -147,6 +159,12 @@ func (h *WebhookHandler) ParseWebhookEvent(body []byte) (*providers.WebhookEvent
 			event.Payload = data
 		}
 
+	case PushCodeReturnStatusUpdate:
+		var data ReturnStatusData
+		if err := json.Unmarshal(payload.Data, &data); err == nil {
+			event.Payload = data
+		}
+
 	default:
 		// Store raw data for unknown event types
 		var rawData map[string]interface{}
@@ -180,6 +198,8 @@ func (h *WebhookHandler) mapEventType(code int) string {
 		return "brand.register"
 	case PushCodeOpenApi:
 		return "openapi"
+	case PushCodeReturnStatusUpdate:
+		return "return.status_changed"
 	case PushCodeWebhookTest:
 		return "webhook.test"
 	default:
@@ -211,10 +231,34 @@ func ExtractShopID(event *providers.WebhookEvent) (int64, bool) {
 		return data.ShopID, true
 	case TrackingUpdateData:
 		return data.ShopID, true
+	case ReturnStatusData:
+		return data.ShopID, true
 	case map[string]interface{}:
 		if shopID, ok := data["shop_id"].(float64); ok {
 			return int64(shopID), true
 		}
 	}
 	return 0, false
+}
+
+// ExtractReturnSN extracts the return SN from a return-related webhook event.
+func ExtractReturnSN(event *providers.WebhookEvent) (string, bool) {
+	switch data := event.Payload.(type) {
+	case ReturnStatusData:
+		return data.ReturnSN, true
+	case map[string]interface{}:
+		if returnSN, ok := data["returnsn"].(string); ok {
+			return returnSN, true
+		}
+	}
+	return "", false
+}
+
+// ExtractReturnOrderSN extracts the order SN from a return webhook event.
+func ExtractReturnOrderSN(event *providers.WebhookEvent) (string, bool) {
+	switch data := event.Payload.(type) {
+	case ReturnStatusData:
+		return data.OrderSN, true
+	}
+	return "", false
 }

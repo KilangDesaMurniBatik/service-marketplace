@@ -17,13 +17,14 @@ const (
 
 // Provider implements the MarketplaceProvider interface for Shopee.
 type Provider struct {
-	client         *Client
-	authProvider   *AuthProvider
+	client          *Client
+	authProvider    *AuthProvider
 	productProvider *ProductProvider
-	orderProvider  *OrderProvider
-	webhookHandler *WebhookHandler
-	logger         *zap.Logger
-	config         *ProviderConfig
+	orderProvider   *OrderProvider
+	returnProvider  *ReturnProvider
+	webhookHandler  *WebhookHandler
+	logger          *zap.Logger
+	config          *ProviderConfig
 }
 
 // ProviderConfig holds configuration for the Shopee provider.
@@ -55,13 +56,14 @@ func NewProvider(cfg *ProviderConfig, logger *zap.Logger) (*Provider, error) {
 	}
 
 	return &Provider{
-		client:         client,
-		authProvider:   NewAuthProvider(client, cfg.RedirectURL),
+		client:          client,
+		authProvider:    NewAuthProvider(client, cfg.RedirectURL),
 		productProvider: NewProductProvider(client),
-		orderProvider:  NewOrderProvider(client),
-		webhookHandler: NewWebhookHandler(cfg.PartnerKey, cfg.WebhookURL, logger),
-		logger:         logger,
-		config:         cfg,
+		orderProvider:   NewOrderProvider(client),
+		returnProvider:  NewReturnProvider(client),
+		webhookHandler:  NewWebhookHandler(cfg.PartnerKey, cfg.WebhookURL, logger),
+		logger:          logger,
+		config:          cfg,
 	}, nil
 }
 
@@ -185,6 +187,28 @@ func (p *Provider) GetOrder(ctx context.Context, externalOrderID string) (*provi
 // UpdateOrderStatus updates the status of an order.
 func (p *Provider) UpdateOrderStatus(ctx context.Context, externalOrderID string, status string, tracking *providers.TrackingInfo) error {
 	return p.orderProvider.UpdateOrderStatus(ctx, externalOrderID, status)
+}
+
+// --- Return Methods ---
+
+// GetReturns retrieves return/refund requests from the marketplace.
+func (p *Provider) GetReturns(ctx context.Context, params *providers.ReturnListParams) ([]providers.ExternalReturn, string, error) {
+	return p.returnProvider.GetReturns(ctx, params)
+}
+
+// GetReturn retrieves a single return request.
+func (p *Provider) GetReturn(ctx context.Context, externalReturnID string) (*providers.ExternalReturn, error) {
+	return p.returnProvider.GetReturn(ctx, externalReturnID)
+}
+
+// ConfirmReturn accepts a return request.
+func (p *Provider) ConfirmReturn(ctx context.Context, externalReturnID string) error {
+	return p.returnProvider.ConfirmReturn(ctx, externalReturnID)
+}
+
+// DisputeReturn disputes/rejects a return request.
+func (p *Provider) DisputeReturn(ctx context.Context, externalReturnID string, email string, reason string, images []string) error {
+	return p.returnProvider.DisputeReturn(ctx, externalReturnID, email, reason, images)
 }
 
 // --- Webhook Methods ---
