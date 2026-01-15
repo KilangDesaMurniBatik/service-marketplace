@@ -22,6 +22,7 @@ import (
 	"github.com/niaga-platform/service-marketplace/internal/services"
 
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 	libauth "github.com/niaga-platform/lib-common/auth"
 	libdb "github.com/niaga-platform/lib-common/database"
 	liblogger "github.com/niaga-platform/lib-common/logger"
@@ -147,6 +148,28 @@ func main() {
 		logger.Fatal("Failed to initialize product sync service", zap.Error(err))
 	}
 
+	// Connect to Redis for caching (optional)
+	var redisClient *redis.Client
+	var analyticsCacheService *services.AnalyticsCacheService
+	if cfg.Redis.Host != "" {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Host + ":" + cfg.Redis.Port,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+		// Test connection
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			logger.Warn("Failed to connect to Redis, analytics caching disabled", zap.Error(err))
+			redisClient = nil
+		} else {
+			logger.Info("Connected to Redis for caching", zap.String("host", cfg.Redis.Host))
+			// Create cache service with 10 minute TTL
+			analyticsCacheService = services.NewAnalyticsCacheService(redisClient, 10*time.Minute, logger)
+		}
+		cancel()
+	}
+
 	// Initialize provider factory service for analytics
 	providerFactoryService, err := services.NewProviderFactoryService(
 		connectionRepo,
@@ -178,7 +201,7 @@ func main() {
 	// Initialize analytics handler (optional)
 	var analyticsHandler *handlers.AnalyticsHandler
 	if providerFactoryService != nil {
-		analyticsHandler = handlers.NewAnalyticsHandler(connectionService, providerFactoryService, logger)
+		analyticsHandler = handlers.NewAnalyticsHandler(connectionService, providerFactoryService, analyticsCacheService, logger)
 	}
 
 	// Connect to NATS (optional - only if configured)

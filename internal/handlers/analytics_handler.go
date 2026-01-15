@@ -17,6 +17,7 @@ import (
 type AnalyticsHandler struct {
 	connService     *services.ConnectionService
 	providerFactory *services.ProviderFactoryService
+	cacheService    *services.AnalyticsCacheService
 	logger          *zap.Logger
 }
 
@@ -24,11 +25,13 @@ type AnalyticsHandler struct {
 func NewAnalyticsHandler(
 	connService *services.ConnectionService,
 	providerFactory *services.ProviderFactoryService,
+	cacheService *services.AnalyticsCacheService,
 	logger *zap.Logger,
 ) *AnalyticsHandler {
 	return &AnalyticsHandler{
 		connService:     connService,
 		providerFactory: providerFactory,
+		cacheService:    cacheService,
 		logger:          logger,
 	}
 }
@@ -39,6 +42,7 @@ func NewAnalyticsHandler(
 // @Param id path string true "Connection ID"
 // @Param start_date query string false "Start date (YYYY-MM-DD)"
 // @Param end_date query string false "End date (YYYY-MM-DD)"
+// @Param refresh query bool false "Force refresh (bypass cache)"
 // @Success 200 {object} providers.AnalyticsResponse
 // @Router /admin/marketplace/connections/{id}/analytics [get]
 func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
@@ -51,10 +55,12 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	// Parse date range
 	startDateStr := c.DefaultQuery("start_date", "")
 	endDateStr := c.DefaultQuery("end_date", "")
+	forceRefresh := c.Query("refresh") == "true"
 
 	var startDate, endDate time.Time
 	if startDateStr == "" {
 		startDate = time.Now().AddDate(0, 0, -30)
+		startDateStr = startDate.Format("2006-01-02")
 	} else {
 		startDate, err = time.Parse("2006-01-02", startDateStr)
 		if err != nil {
@@ -65,6 +71,7 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 
 	if endDateStr == "" {
 		endDate = time.Now()
+		endDateStr = endDate.Format("2006-01-02")
 	} else {
 		endDate, err = time.Parse("2006-01-02", endDateStr)
 		if err != nil {
@@ -81,67 +88,96 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 		return
 	}
 
-	// Get provider - currently only Shopee supports full analytics
-	provider, err := h.providerFactory.CreateShopeeProviderForConnection(c.Request.Context(), connectionID)
-	if err != nil {
-		h.logger.Error("failed to get provider", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize provider"})
-		return
+	// Try to get from cache first (unless force refresh)
+	var cached *services.CachedAnalytics
+	var fromCache bool
+	if h.cacheService != nil && !forceRefresh {
+		cached, _ = h.cacheService.Get(c.Request.Context(), connectionID.String(), startDateStr, endDateStr)
+		if cached != nil {
+			fromCache = true
+			h.logger.Debug("serving analytics from cache", zap.String("connection_id", connectionID.String()))
+		}
 	}
 
-	// Check if provider supports analytics
-	analyticsProvider, ok := interface{}(provider).(AnalyticsProvider)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "This marketplace does not support analytics"})
-		return
-	}
-
-	params := providers.AnalyticsQueryParams{
-		StartDate: startDate,
-		EndDate:   endDate,
-		Limit:     10,
-	}
-
-	// Get all analytics data
 	var response providers.AnalyticsResponse
 
-	// Get performance
-	performance, err := analyticsProvider.GetShopPerformance(c.Request.Context(), params)
-	if err != nil {
-		h.logger.Warn("failed to get shop performance", zap.Error(err))
-	}
-	response.Performance = performance
+	if cached != nil {
+		// Use cached data
+		response.Performance = cached.Performance
+		response.DailySales = cached.DailySales
+		response.TopProducts = cached.TopProducts
+		response.TrafficSource = cached.TrafficSources
+	} else {
+		// Fetch fresh data from provider
+		provider, err := h.providerFactory.CreateShopeeProviderForConnection(c.Request.Context(), connectionID)
+		if err != nil {
+			h.logger.Error("failed to get provider", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize provider"})
+			return
+		}
 
-	// Get daily sales
-	dailySales, err := analyticsProvider.GetDailySales(c.Request.Context(), params)
-	if err != nil {
-		h.logger.Warn("failed to get daily sales", zap.Error(err))
-	}
-	response.DailySales = dailySales
+		// Check if provider supports analytics
+		analyticsProvider, ok := interface{}(provider).(AnalyticsProvider)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "This marketplace does not support analytics"})
+			return
+		}
 
-	// Get top products
-	topProducts, err := analyticsProvider.GetTopProducts(c.Request.Context(), params)
-	if err != nil {
-		h.logger.Warn("failed to get top products", zap.Error(err))
-	}
-	response.TopProducts = topProducts
+		params := providers.AnalyticsQueryParams{
+			StartDate: startDate,
+			EndDate:   endDate,
+			Limit:     10,
+		}
 
-	// Get traffic sources
-	trafficSources, err := analyticsProvider.GetTrafficSources(c.Request.Context(), params)
-	if err != nil {
-		h.logger.Warn("failed to get traffic sources", zap.Error(err))
+		// Get all analytics data
+		performance, err := analyticsProvider.GetShopPerformance(c.Request.Context(), params)
+		if err != nil {
+			h.logger.Warn("failed to get shop performance", zap.Error(err))
+		}
+		response.Performance = performance
+
+		dailySales, err := analyticsProvider.GetDailySales(c.Request.Context(), params)
+		if err != nil {
+			h.logger.Warn("failed to get daily sales", zap.Error(err))
+		}
+		response.DailySales = dailySales
+
+		topProducts, err := analyticsProvider.GetTopProducts(c.Request.Context(), params)
+		if err != nil {
+			h.logger.Warn("failed to get top products", zap.Error(err))
+		}
+		response.TopProducts = topProducts
+
+		trafficSources, err := analyticsProvider.GetTrafficSources(c.Request.Context(), params)
+		if err != nil {
+			h.logger.Warn("failed to get traffic sources", zap.Error(err))
+		}
+		response.TrafficSource = trafficSources
+
+		// Store in cache
+		if h.cacheService != nil {
+			cacheData := &services.CachedAnalytics{
+				Performance:    response.Performance,
+				DailySales:     response.DailySales,
+				TopProducts:    response.TopProducts,
+				TrafficSources: response.TrafficSource,
+			}
+			if err := h.cacheService.Set(c.Request.Context(), connectionID.String(), startDateStr, endDateStr, cacheData); err != nil {
+				h.logger.Warn("failed to cache analytics", zap.Error(err))
+			}
+		}
 	}
-	response.TrafficSource = trafficSources
 
 	c.JSON(http.StatusOK, gin.H{
 		"connection_id": connectionID.String(),
 		"platform":      conn.Platform,
 		"shop_name":     conn.ShopName,
 		"date_range": gin.H{
-			"start": startDate.Format("2006-01-02"),
-			"end":   endDate.Format("2006-01-02"),
+			"start": startDateStr,
+			"end":   endDateStr,
 		},
-		"analytics": response,
+		"analytics":  response,
+		"from_cache": fromCache,
 	})
 }
 

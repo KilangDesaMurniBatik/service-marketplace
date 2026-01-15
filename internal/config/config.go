@@ -10,6 +10,7 @@ import (
 type Config struct {
 	App      AppConfig      `mapstructure:"app"`
 	Database DatabaseConfig `mapstructure:"database"`
+	Redis    RedisConfig    `mapstructure:"redis"`
 	NATS     NATSConfig     `mapstructure:"nats"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	Sentry   SentryConfig   `mapstructure:"sentry"`
@@ -17,6 +18,14 @@ type Config struct {
 	TikTok   TikTokConfig   `mapstructure:"tiktok"`
 	Security SecurityConfig `mapstructure:"security"`
 	Services ServicesConfig `mapstructure:"services"`
+}
+
+// RedisConfig holds Redis cache configuration
+type RedisConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     string `mapstructure:"port"`
+	Password string `mapstructure:"password"`
+	DB       int    `mapstructure:"db"`
 }
 
 // AppConfig holds application configuration
@@ -102,6 +111,12 @@ func Load() (*Config, error) {
 
 	_ = v.BindEnv("nats.url", "NATS_URL")
 
+	// Redis
+	_ = v.BindEnv("redis.host", "REDIS_HOST")
+	_ = v.BindEnv("redis.port", "REDIS_PORT")
+	_ = v.BindEnv("redis.password", "REDIS_PASSWORD")
+	_ = v.BindEnv("redis.db", "REDIS_DB")
+
 	_ = v.BindEnv("jwt.secret", "JWT_SECRET")
 
 	_ = v.BindEnv("sentry.dsn", "SENTRY_DSN")
@@ -151,6 +166,12 @@ func setDefaults(v *viper.Viper) {
 
 	// NATS
 	v.SetDefault("nats.url", "nats://localhost:4222")
+
+	// Redis
+	v.SetDefault("redis.host", "localhost")
+	v.SetDefault("redis.port", "6379")
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.db", 0)
 
 	// Shopee
 	v.SetDefault("shopee.is_sandbox", true)
