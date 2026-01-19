@@ -28,6 +28,7 @@ import (
 	liblogger "github.com/niaga-platform/lib-common/logger"
 	libmiddleware "github.com/niaga-platform/lib-common/middleware"
 	"github.com/niaga-platform/lib-common/monitoring"
+	"github.com/niaga-platform/lib-common/telemetry"
 )
 
 func main() {
@@ -48,6 +49,26 @@ func main() {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 	defer logger.Sync()
+
+	// Initialize OpenTelemetry for distributed tracing
+	otelCfg := telemetry.DefaultConfig("service-marketplace")
+	otelTracer, err := telemetry.New(otelCfg, logger)
+	if err != nil {
+		logger.Warn("Failed to initialize OpenTelemetry", zap.Error(err))
+	}
+	if otelTracer != nil {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := otelTracer.Shutdown(shutdownCtx); err != nil {
+				logger.Error("OpenTelemetry shutdown error", zap.Error(err))
+			}
+		}()
+		logger.Info("OpenTelemetry tracing initialized",
+			zap.String("endpoint", otelCfg.OTLPEndpoint),
+			zap.Bool("enabled", otelCfg.Enabled),
+		)
+	}
 
 	// Initialize Sentry for error tracking
 	sentryMonitor, err := monitoring.NewSentryMonitor(&monitoring.SentryConfig{
@@ -79,6 +100,12 @@ func main() {
 
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
+
+	// Register GORM tracing callbacks
+	gormTracer := telemetry.NewGORMTracer("service-marketplace", cfg.Database.Database)
+	if err := gormTracer.RegisterCallbacks(db); err != nil {
+		logger.Warn("Failed to register GORM tracing callbacks", zap.Error(err))
+	}
 
 	// Initialize JWT manager for auth middleware
 	jwtManager := libauth.NewJWTManager(
@@ -316,6 +343,7 @@ func main() {
 	router := gin.New()
 
 	// Apply global middleware
+	router.Use(telemetry.TracingMiddleware("service-marketplace")) // OpenTelemetry tracing (must be first)
 	router.Use(sentryMonitor.GinMiddleware())
 	router.Use(sentryMonitor.RecoveryMiddleware())
 	router.Use(libmiddleware.LoggerMiddleware(logger))
